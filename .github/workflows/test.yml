@@ -1,0 +1,16 @@
+name: Farm Worker Test
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Test Runner
+        run: |
+          echo "================================"
+          echo "Farm Worker started"
+          echo "Time: $(date -u)"
+          echo "================================"
