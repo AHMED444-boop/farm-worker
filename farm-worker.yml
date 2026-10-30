@@ -1,0 +1,67 @@
+name: Farm Worker
+
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: farm-worker
+  cancel-in-progress: false
+
+jobs:
+  run-worker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install Playwright
+        run: |
+          npm init -y >/dev/null 2>&1
+          npm install playwright@1.55.0 --no-audit --no-fund
+          npx playwright install --with-deps chromium
+
+      - name: Run Farm Worker
+        env:
+          FARM_WORKER_TOKEN: ${{ secrets.FARM_WORKER_TOKEN }}
+          FARM_SITE_URL: https://magharet-alibaba.rf.gd
+        run: |
+          node <<'NODE'
+          const { chromium } = require('playwright');
+          const token = process.env.FARM_WORKER_TOKEN;
+          const base = process.env.FARM_SITE_URL.replace(/\/$/, '');
+          if (!token) throw new Error('FARM_WORKER_TOKEN secret is missing');
+
+          (async() => {
+            const browser = await chromium.launch({headless:true});
+            const context = await browser.newContext();
+            const page = await context.newPage();
+
+            console.log('Checking worker schedule...');
+            const loginResponse = await page.goto(`${base}/api/worker.php?action=login`, {
+              waitUntil: 'domcontentloaded',
+              headers: { 'Authorization': `Bearer ${token}` }
+            });
+            if (!loginResponse || !loginResponse.ok()) {
+              throw new Error(`Worker login HTTP ${loginResponse?.status() || 'unknown'}`);
+            }
+
+            await page.goto(`${base}/index.php?worker=1`, {waitUntil:'domcontentloaded'});
+            await page.waitForFunction(() => window.__WORKER_FINISHED !== undefined, null, {timeout: 8 * 60 * 1000});
+            const result = await page.evaluate(() => window.__WORKER_FINISHED);
+            console.log('Worker result:', JSON.stringify(result));
+            await browser.close();
+            if (!result || result.success !== true) process.exit(1);
+          })().catch(async err => {
+            console.error(err?.stack || err);
+            process.exit(1);
+          });
+          NODE
